@@ -28,8 +28,6 @@ set(FREERDP_CODEC_SRCS
 	rfx_differential.h
 	rfx_dwt.c
 	rfx_dwt.h
-	rfx_encode.c
-	rfx_encode.h
 	rfx_pool.c
 	rfx_pool.h
 	rfx_quantization.c
@@ -55,4 +53,8 @@ set_target_properties(freerdp-codec PROPERTIES VERSION ${FREERDP_VERSION_FULL} S
 target_link_libraries(freerdp-codec freerdp-utils)
 
 install(TARGETS freerdp-codec DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+#openmp
+#set_property(TARGET freerdp-codec PROPERTY COMPILE_FLAGS "-fopenmp")
+
 

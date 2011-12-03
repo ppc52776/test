@@ -24,6 +24,7 @@
 #include <freerdp/codec/rfx.h>
 #include <freerdp/utils/memory.h>
 #include <freerdp/constants.h>
+#include <omp.h>
 
 #include "rfx_constants.h"
 #include "rfx_types.h"
@@ -134,11 +135,12 @@ RFX_CONTEXT* rfx_context_new(void)
 	RFX_CONTEXT* context;
 
 	context = xnew(RFX_CONTEXT);
-	context->priv = xnew(RFX_CONTEXT_PRIV);
-	context->priv->pool = rfx_pool_new();
-
-	/* initialize the default pixel format */
-	rfx_context_set_pixel_format(context, RFX_PIXEL_FORMAT_BGRA);
+	int i=0;
+	for(i=0;i<2;i++)
+	{
+	context->priv_set[i] = xnew(RFX_CONTEXT_PRIV);
+	context->priv = context->priv_set[i];
+	//context->priv[i]->pool = rfx_pool_new();
 
 	/* align buffers to 16 byte boundary (needed for SSE/SSE2 instructions) */
 	context->priv->y_r_buffer = (sint16*)(((uintptr_t)context->priv->y_r_mem + 16) & ~ 0x0F);
@@ -146,17 +148,24 @@ RFX_CONTEXT* rfx_context_new(void)
 	context->priv->cr_b_buffer = (sint16*)(((uintptr_t)context->priv->cr_b_mem + 16) & ~ 0x0F);
 
 	context->priv->dwt_buffer = (sint16*)(((uintptr_t)context->priv->dwt_mem + 16) & ~ 0x0F);
+	}
+	context->priv = NULL;
+	context->priv_set[0]->pool = rfx_pool_new();    //only need one tile buffer
+	context->priv_set[1]->pool = context->priv_set[0]->pool;
+
+    /* initialize the default pixel format */
+	rfx_context_set_pixel_format(context, RFX_PIXEL_FORMAT_BGRA);
 
 	/* create profilers for default decoding routines */
 	rfx_profiler_create(context);
-	
+
 	/* set up default routines */
 	context->decode_ycbcr_to_rgb = rfx_decode_ycbcr_to_rgb;
-	context->encode_rgb_to_ycbcr = rfx_encode_rgb_to_ycbcr;
-	context->quantization_decode = rfx_quantization_decode;	
-	context->quantization_encode = rfx_quantization_encode;	
+	//context->encode_rgb_to_ycbcr = rfx_encode_rgb_to_ycbcr;
+	context->quantization_decode = rfx_quantization_decode;
+	//context->quantization_encode = rfx_quantization_encode;
 	context->dwt_2d_decode = rfx_dwt_2d_decode;
-	context->dwt_2d_encode = rfx_dwt_2d_encode;
+	//context->dwt_2d_encode = rfx_dwt_2d_encode;
 
 	return context;
 }
@@ -172,12 +181,13 @@ void rfx_context_free(RFX_CONTEXT* context)
 {
 	xfree(context->quants);
 
-	rfx_pool_free(context->priv->pool);
+	rfx_pool_free(context->priv_set[0]->pool);
 
 	rfx_profiler_print(context);
 	rfx_profiler_free(context);
 
-	xfree(context->priv);
+	xfree(context->priv_set[0]);
+	xfree(context->priv_set[1]);
 	xfree(context);
 }
 
@@ -391,6 +401,7 @@ static void rfx_process_message_tile(RFX_CONTEXT* context, RFX_TILE* tile, STREA
 	tile->x = xIdx * 64;
 	tile->y = yIdx * 64;
 
+    //#pragma omp critical
 	rfx_decode_rgb(context, s,
 		YLen, context->quants + (quantIdxY * 10),
 		CbLen, context->quants + (quantIdxCb * 10),
@@ -473,26 +484,46 @@ static void rfx_process_message_tileset(RFX_CONTEXT* context, RFX_MESSAGE* messa
 			context->quants[i * 10 + 8], context->quants[i * 10 + 9]);
 	}
 
-	message->tiles = rfx_pool_get_tiles(context->priv->pool, message->num_tiles);
+	message->tiles = rfx_pool_get_tiles(context->priv_set[0]->pool, message->num_tiles);
 
 	/* tiles */
+    static STREAM ss;// = xnew(STREAM);
+	static int j, jj;
+	j=0;
+	#pragma omp parallel for private(pos, jj, ss) num_threads(2) schedule(dynamic,32)
 	for (i = 0; i < message->num_tiles; i++)
 	{
+	    #pragma omp critical
+	    {
 		/* RFX_TILE */
 		stream_read_uint16(s, blockType); /* blockType (2 bytes), must be set to CBT_TILE (0xCAC3) */
 		stream_read_uint32(s, blockLen); /* blockLen (4 bytes) */
 
 		pos = stream_get_pos(s) - 6 + blockLen;
+		stream_attach((&ss), s->data, s->size);
+        stream_set_pos((&ss), stream_get_pos(s));
+        stream_set_pos(s, pos);
+        jj=j++;
+	    }
+	    //printf("num_tiles=%d, jj=%d, ss=%ld\n", message->num_tiles, jj, stream_get_pos(ss));
 
+#if 0
 		if (blockType != CBT_TILE)
 		{
 			DEBUG_WARN("unknown block type 0x%X, expected CBT_TILE (0xCAC3).", blockType);
 			break;
 		}
-
-		rfx_process_message_tile(context, message->tiles[i], s);
-
-		stream_set_pos(s, pos);
+#endif
+        if (blockType == CBT_TILE)
+        {
+            //printf("Is CBT_TILE..\n");
+            rfx_process_message_tile(context, message->tiles[jj], &ss);
+        }
+        else
+        {
+            printf("unknown block type 0x%X, expected CBT_TILE (0xCAC3).", blockType);
+        }
+        //}//end omp
 	}
 }
 
@@ -608,7 +639,7 @@ void rfx_message_free(RFX_CONTEXT* context, RFX_MESSAGE* message)
 
 		if (message->tiles != NULL)
 		{
-			rfx_pool_put_tiles(context->priv->pool, message->tiles, message->num_tiles);
+			rfx_pool_put_tiles(context->priv_set[0]->pool, message->tiles, message->num_tiles);
 			xfree(message->tiles);
 		}
 
@@ -749,9 +780,9 @@ static void rfx_compose_message_tile(RFX_CONTEXT* context, STREAM* s,
 
 	stream_seek(s, 6); /* YLen, CbLen, CrLen */
 
-	rfx_encode_rgb(context, tile_data, tile_width, tile_height, rowstride,
-		quantVals + quantIdxY * 10, quantVals + quantIdxCb * 10, quantVals + quantIdxCr * 10,
-		s, &YLen, &CbLen, &CrLen);
+	//rfx_encode_rgb(context, tile_data, tile_width, tile_height, rowstride,
+	//	quantVals + quantIdxY * 10, quantVals + quantIdxCb * 10, quantVals + quantIdxCr * 10,
+	//	s, &YLen, &CbLen, &CrLen);
 
 	DEBUG_RFX("xIdx=%d yIdx=%d width=%d height=%d YLen=%d CbLen=%d CrLen=%d",
 		xIdx, yIdx, tile_width, tile_height, YLen, CbLen, CrLen);

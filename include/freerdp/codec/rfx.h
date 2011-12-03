@@ -24,6 +24,9 @@
 #include <freerdp/types.h>
 #include <freerdp/utils/stream.h>
 
+//copy from libfreerdp-codecs/rfx_types.h
+//#include <libfreerdp-codec/rfx_pool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -122,6 +125,8 @@ struct _RFX_CONTEXT
 
 	/* private definitions */
 	RFX_CONTEXT_PRIV* priv;
+	RFX_CONTEXT_PRIV* priv_set[2];
+	//RFX_POOL* priv_pool; /* memory pool */
 };
 typedef struct _RFX_CONTEXT RFX_CONTEXT;
 

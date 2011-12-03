@@ -62,6 +62,9 @@ if(NOT BUILD_SHARED_LIBS)
     set(BUILD_SHARED_LIBS ON)
 endif()
 
+# openmp
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fopenmp")
+
 # Compiler-specific flags
 if(CMAKE_COMPILER_IS_GNUCC)
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")

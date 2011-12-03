@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <omp.h>
 #include <freerdp/utils/stream.h>
 #include "rfx_types.h"
 #include "rfx_rlgr.h"
@@ -27,7 +28,11 @@
 #include "rfx_quantization.h"
 #include "rfx_dwt.h"
 
+#include <freerdp/utils/bitmap.h>
+
 #include "rfx_decode.h"
+
+//static int tid; //omp thread id
 
 static void rfx_decode_format_rgb(sint16* r_buf, sint16* g_buf, sint16* b_buf,
 	RFX_PIXEL_FORMAT pixel_format, uint8* dst_buf)
@@ -37,7 +42,7 @@ static void rfx_decode_format_rgb(sint16* r_buf, sint16* g_buf, sint16* b_buf,
 	sint16* b = b_buf;
 	uint8* dst = dst_buf;
 	int i;
-	
+
 	switch (pixel_format)
 	{
 		case RFX_PIXEL_FORMAT_BGRA:
@@ -132,7 +137,8 @@ static void rfx_decode_component(RFX_CONTEXT* context, const uint32* quantizatio
 	PROFILER_EXIT(context->priv->prof_rfx_quantization_decode);
 
 	PROFILER_ENTER(context->priv->prof_rfx_dwt_2d_decode);
-		context->dwt_2d_decode(buffer, context->priv->dwt_buffer);
+		context->dwt_2d_decode(buffer, context->priv_set[omp_get_thread_num()]->dwt_buffer);
+		//context->dwt_2d_decode(buffer, context->priv_set[0]->dwt_buffer);
 	PROFILER_EXIT(context->priv->prof_rfx_dwt_2d_decode);
 
 	PROFILER_EXIT(context->priv->prof_rfx_decode_component);
@@ -143,23 +149,47 @@ void rfx_decode_rgb(RFX_CONTEXT* context, STREAM* data_in,
 	int cb_size, const uint32 * cb_quants,
 	int cr_size, const uint32 * cr_quants, uint8* rgb_buffer)
 {
+    //#pragma omp critical
+    {
 	PROFILER_ENTER(context->priv->prof_rfx_decode_rgb);
+	int tid=omp_get_thread_num();
+	//printf("omp_thread: %d\n", tid);
+	//static int tile_count=0;
 
-	rfx_decode_component(context, y_quants, stream_get_tail(data_in), y_size, context->priv->y_r_buffer); /* YData */
+    //#pragma omp critical
+    //context->priv = context->priv_set[tid];
+    //#pragma omp critical
+    {
+	//rfx_decode_component(context, y_quants, stream_get_tail(data_in), y_size, context->priv->y_r_buffer); /* YData */
+	rfx_decode_component(context, y_quants, stream_get_tail(data_in), y_size, context->priv_set[tid]->y_r_buffer); /* YData */
 	stream_seek(data_in, y_size);
-	rfx_decode_component(context, cb_quants, stream_get_tail(data_in), cb_size, context->priv->cb_g_buffer); /* CbData */
+	//rfx_decode_component(context, cb_quants, stream_get_tail(data_in), cb_size, context->priv->cb_g_buffer); /* CbData */
+	rfx_decode_component(context, cb_quants, stream_get_tail(data_in), cb_size, context->priv_set[tid]->cb_g_buffer); /* CbData */
 	stream_seek(data_in, cb_size);
-	rfx_decode_component(context, cr_quants, stream_get_tail(data_in), cr_size, context->priv->cr_b_buffer); /* CrData */
+	//rfx_decode_component(context, cr_quants, stream_get_tail(data_in), cr_size, context->priv->cr_b_buffer); /* CrData */
+	rfx_decode_component(context, cr_quants, stream_get_tail(data_in), cr_size, context->priv_set[tid]->cr_b_buffer); /* CrData */
 	stream_seek(data_in, cr_size);
+    //}
 
 	PROFILER_ENTER(context->priv->prof_rfx_decode_ycbcr_to_rgb);
-		context->decode_ycbcr_to_rgb(context->priv->y_r_buffer, context->priv->cb_g_buffer, context->priv->cr_b_buffer);
+	//#pragma omp critical
+	//{
+		//context->decode_ycbcr_to_rgb(context->priv->y_r_buffer, context->priv->cb_g_buffer, context->priv->cr_b_buffer);
+		context->decode_ycbcr_to_rgb(context->priv_set[tid]->y_r_buffer, context->priv_set[tid]->cb_g_buffer, context->priv_set[tid]->cr_b_buffer);
 	PROFILER_EXIT(context->priv->prof_rfx_decode_ycbcr_to_rgb);
 
 	PROFILER_ENTER(context->priv->prof_rfx_decode_format_rgb);
-		rfx_decode_format_rgb(context->priv->y_r_buffer, context->priv->cb_g_buffer, context->priv->cr_b_buffer,
+	//#pragma omp critical
+		//rfx_decode_format_rgb(context->priv->y_r_buffer, context->priv->cb_g_buffer, context->priv->cr_b_buffer,
+		//	context->pixel_format, rgb_buffer);
+        rfx_decode_format_rgb(context->priv_set[tid]->y_r_buffer, context->priv_set[tid]->cb_g_buffer, context->priv_set[tid]->cr_b_buffer,
 			context->pixel_format, rgb_buffer);
+	}
+        //char filename[20];
+        //sprintf(filename, "/tmp/rfx_%d_%d.bmp", tid, tile_count++);
+        //freerdp_bitmap_write(filename, rgb_buffer, 64, 64, 32);
 	PROFILER_EXIT(context->priv->prof_rfx_decode_format_rgb);
-	
+
 	PROFILER_EXIT(context->priv->prof_rfx_decode_rgb);
+    }
 }
