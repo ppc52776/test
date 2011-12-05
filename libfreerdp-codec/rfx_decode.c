@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <omp.h>
+#include <pthread.h>
 #include <freerdp/utils/stream.h>
 #include "rfx_types.h"
 #include "rfx_rlgr.h"
@@ -33,6 +34,7 @@
 #include "rfx_decode.h"
 
 //static int tid; //omp thread id
+pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
 
 static void rfx_decode_format_rgb(sint16* r_buf, sint16* g_buf, sint16* b_buf,
 	RFX_PIXEL_FORMAT pixel_format, uint8* dst_buf)
@@ -120,7 +122,7 @@ void rfx_decode_ycbcr_to_rgb(sint16* y_r_buf, sint16* cb_g_buf, sint16* cr_b_buf
 }
 
 static void rfx_decode_component(RFX_CONTEXT* context, const uint32* quantization_values,
-	const uint8* data, int size, sint16* buffer)
+	const uint8* data, int size, sint16* buffer, int tid)
 {
 	PROFILER_ENTER(context->priv->prof_rfx_decode_component);
 
@@ -137,7 +139,8 @@ static void rfx_decode_component(RFX_CONTEXT* context, const uint32* quantizatio
 	PROFILER_EXIT(context->priv->prof_rfx_quantization_decode);
 
 	PROFILER_ENTER(context->priv->prof_rfx_dwt_2d_decode);
-		context->dwt_2d_decode(buffer, context->priv_set[omp_get_thread_num()]->dwt_buffer);
+		//context->dwt_2d_decode(buffer, context->priv_set[omp_get_thread_num()]->dwt_buffer);
+		context->dwt_2d_decode(buffer, context->priv_set[tid]->dwt_buffer);
 		//context->dwt_2d_decode(buffer, context->priv_set[0]->dwt_buffer);
 	PROFILER_EXIT(context->priv->prof_rfx_dwt_2d_decode);
 
@@ -147,12 +150,13 @@ static void rfx_decode_component(RFX_CONTEXT* context, const uint32* quantizatio
 void rfx_decode_rgb(RFX_CONTEXT* context, STREAM* data_in,
 	int y_size, const uint32 * y_quants,
 	int cb_size, const uint32 * cb_quants,
-	int cr_size, const uint32 * cr_quants, uint8* rgb_buffer)
+	int cr_size, const uint32 * cr_quants, uint8* rgb_buffer,
+	int tid)
 {
     //#pragma omp critical
     {
 	PROFILER_ENTER(context->priv->prof_rfx_decode_rgb);
-	int tid=omp_get_thread_num();
+	//int tid=omp_get_thread_num();
 	//printf("omp_thread: %d\n", tid);
 	//static int tile_count=0;
 
@@ -160,14 +164,15 @@ void rfx_decode_rgb(RFX_CONTEXT* context, STREAM* data_in,
     //context->priv = context->priv_set[tid];
     //#pragma omp critical
     {
+    //pthread_mutex_lock(&mutex2);
 	//rfx_decode_component(context, y_quants, stream_get_tail(data_in), y_size, context->priv->y_r_buffer); /* YData */
-	rfx_decode_component(context, y_quants, stream_get_tail(data_in), y_size, context->priv_set[tid]->y_r_buffer); /* YData */
+	rfx_decode_component(context, y_quants, stream_get_tail(data_in), y_size, context->priv_set[tid]->y_r_buffer, tid); /* YData */
 	stream_seek(data_in, y_size);
 	//rfx_decode_component(context, cb_quants, stream_get_tail(data_in), cb_size, context->priv->cb_g_buffer); /* CbData */
-	rfx_decode_component(context, cb_quants, stream_get_tail(data_in), cb_size, context->priv_set[tid]->cb_g_buffer); /* CbData */
+	rfx_decode_component(context, cb_quants, stream_get_tail(data_in), cb_size, context->priv_set[tid]->cb_g_buffer, tid); /* CbData */
 	stream_seek(data_in, cb_size);
 	//rfx_decode_component(context, cr_quants, stream_get_tail(data_in), cr_size, context->priv->cr_b_buffer); /* CrData */
-	rfx_decode_component(context, cr_quants, stream_get_tail(data_in), cr_size, context->priv_set[tid]->cr_b_buffer); /* CrData */
+	rfx_decode_component(context, cr_quants, stream_get_tail(data_in), cr_size, context->priv_set[tid]->cr_b_buffer, tid); /* CrData */
 	stream_seek(data_in, cr_size);
     //}
 
@@ -184,6 +189,7 @@ void rfx_decode_rgb(RFX_CONTEXT* context, STREAM* data_in,
 		//	context->pixel_format, rgb_buffer);
         rfx_decode_format_rgb(context->priv_set[tid]->y_r_buffer, context->priv_set[tid]->cb_g_buffer, context->priv_set[tid]->cr_b_buffer,
 			context->pixel_format, rgb_buffer);
+	//pthread_mutex_unlock(&mutex2);
 	}
         //char filename[20];
         //sprintf(filename, "/tmp/rfx_%d_%d.bmp", tid, tile_count++);

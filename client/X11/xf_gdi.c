@@ -672,6 +672,7 @@ void xf_gdi_surface_bits(rdpContext* context, SURFACE_BITS_COMMAND* surface_bits
 	}
 	else if (surface_bits_command->codecID == CODEC_ID_NSCODEC)
 	{
+	    printf("CODEC=NSC\n");
 		nsc_context->width = surface_bits_command->width;
 		nsc_context->height = surface_bits_command->height;
 		nsc_process_message(nsc_context, surface_bits_command->bitmapData, surface_bits_command->bitmapDataLength);
@@ -707,6 +708,7 @@ void xf_gdi_surface_bits(rdpContext* context, SURFACE_BITS_COMMAND* surface_bits
 	}
 	else if (surface_bits_command->codecID == CODEC_ID_NONE)
 	{
+	    printf("CODEC=NONE\n");
 		XSetFunction(xfi->display, xfi->gc, GXcopy);
 		XSetFillStyle(xfi->display, xfi->gc, FillSolid);
 

@@ -25,6 +25,9 @@
 #include <freerdp/utils/memory.h>
 #include <freerdp/constants.h>
 #include <omp.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <unistd.h>
 
 #include "rfx_constants.h"
 #include "rfx_types.h"
@@ -45,6 +48,14 @@
 #ifndef RFX_INIT_SIMD
 #define RFX_INIT_SIMD(_rfx_context) do { } while (0)
 #endif
+
+sem_t sem, sem2;    //sem for tileset, sem2 for waiting tiles finish
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+STREAM *ss;
+int j;
+RFX_CONTEXT* g_context;
+RFX_MESSAGE* g_message;
+static void *rfx_process_message_tile_thread(void *ptr);
 
 /**
  * The quantization values control the compression rate and quality. The value
@@ -136,6 +147,10 @@ RFX_CONTEXT* rfx_context_new(void)
 
 	context = xnew(RFX_CONTEXT);
 	int i=0;
+	pthread_t th[2];
+	sem_init(&sem, 0, 0);
+	sem_init(&sem2, 0, 0);
+	ss = xnew(STREAM);
 	for(i=0;i<2;i++)
 	{
 	context->priv_set[i] = xnew(RFX_CONTEXT_PRIV);
@@ -149,6 +164,9 @@ RFX_CONTEXT* rfx_context_new(void)
 
 	context->priv->dwt_buffer = (sint16*)(((uintptr_t)context->priv->dwt_mem + 16) & ~ 0x0F);
 	}
+	int t1=0, t2=1;
+	pthread_create(&th[0], NULL, rfx_process_message_tile_thread, (void*) &t1);
+	pthread_create(&th[1], NULL, rfx_process_message_tile_thread, (void*) &t2);
 	context->priv = NULL;
 	context->priv_set[0]->pool = rfx_pool_new();    //only need one tile buffer
 	context->priv_set[1]->pool = context->priv_set[0]->pool;
@@ -377,7 +395,7 @@ static void rfx_process_message_region(RFX_CONTEXT* context, RFX_MESSAGE* messag
 	}
 }
 
-static void rfx_process_message_tile(RFX_CONTEXT* context, RFX_TILE* tile, STREAM* s)
+static void rfx_process_message_tile(RFX_CONTEXT* context, RFX_TILE* tile, STREAM* s, int tid)
 {
 	uint8 quantIdxY;
 	uint8 quantIdxCb;
@@ -406,19 +424,75 @@ static void rfx_process_message_tile(RFX_CONTEXT* context, RFX_TILE* tile, STREA
 		YLen, context->quants + (quantIdxY * 10),
 		CbLen, context->quants + (quantIdxCb * 10),
 		CrLen, context->quants + (quantIdxCr * 10),
-		tile->data);
+		tile->data, tid);
+}
+
+
+static void *rfx_process_message_tile_thread(void *ptr)
+{
+    uint32 blockLen;
+	uint16 blockType;
+    STREAM sss;  //private stream location
+    int pos, jj;
+    int tid = *(int*)ptr;
+    int val;
+
+    while(1)
+    {
+        sem_wait(&sem); //wait until new message comes
+
+        /* critical section */
+        pthread_mutex_lock(&mutex);
+        sem_getvalue(&sem, &val);
+        //printf("tid=%d in lock, val=%d\n", tid, val);
+        //printf("address of ss=%p, ss->size=%d, ss->data=%p, pos=%ld, data=%p\n",
+        //       ss, ss->size, ss->data, stream_get_pos(ss), ((uint16*)ss->data)[0]);
+        /* RFX_TILE */
+        stream_read_uint16(ss, blockType); /* blockType (2 bytes), must be set to CBT_TILE (0xCAC3) */
+        stream_read_uint32(ss, blockLen); /* blockLen (4 bytes) */
+
+        pos = stream_get_pos(ss) - 6 + blockLen;
+        stream_attach((&sss), ss->data, ss->size);
+        stream_set_pos((&sss), stream_get_pos(ss));
+        stream_set_pos(ss, pos);
+        jj=j++;
+        pthread_mutex_unlock(&mutex);
+        /* end of critical section */
+
+        //printf("num_tiles=%d, jj=%d, ss=%ld\n", message->num_tiles, jj, stream_get_pos(ss));
+
+        //printf("jj=%d\n", jj);
+        if (blockType == CBT_TILE)
+        {
+            //printf("Is CBT_TILE..\n");
+            rfx_process_message_tile(g_context, g_message->tiles[jj], &sss, tid);
+        }
+        else
+        {
+            printf("unknown block type 0x%X, expected CBT_TILE (0xCAC3).\n", blockType);
+        }
+        //pthread_mutex_unlock(&mutex);
+        //pthread_mutex_lock(&mutex);
+        if(jj==g_message->num_tiles-1)
+        {
+            jj=-1;
+            sem_post(&sem2);
+        }
+        //pthread_mutex_unlock(&mutex);
+    }
+    return NULL;    //fix for compiler warning
 }
 
 static void rfx_process_message_tileset(RFX_CONTEXT* context, RFX_MESSAGE* message, STREAM* s)
 {
 	int i;
 	uint16 subtype;
-	uint32 blockLen;
-	uint32 blockType;
+	//uint32 blockLen;
+	//uint32 blockType;
 	uint32 tilesDataSize;
 	uint32* quants;
 	uint8 quant;
-	int pos;
+	//int pos;
 
 	stream_read_uint16(s, subtype); /* subtype (2 bytes) must be set to CBT_TILESET (0xCAC2) */
 
@@ -487,44 +561,30 @@ static void rfx_process_message_tileset(RFX_CONTEXT* context, RFX_MESSAGE* messa
 	message->tiles = rfx_pool_get_tiles(context->priv_set[0]->pool, message->num_tiles);
 
 	/* tiles */
-    static STREAM ss;// = xnew(STREAM);
-	static int j, jj;
+    //static STREAM ss;// = xnew(STREAM);
+	//static int j, jj;
 	j=0;
-	#pragma omp parallel for private(pos, jj, ss) num_threads(2) schedule(dynamic,32)
+	int sem_val;
+	stream_attach(ss, s->data, s->size);
+	stream_set_pos(ss, stream_get_pos(s));
+	//memcpy(ss, s, sizeof(STREAM));
+	g_context = context;
+	g_message = message;
+	//printf("address of s =%p,  s->size=%d,  s->data=%p, pos=%ld, data=%p, tiles=%d\n",
+    //    s, s->size, s->data, stream_get_pos(s), ((uint16*)s->data)[0],
+    //    message->num_tiles);
+	//#pragma omp parallel for private(pos, jj, ss) num_threads(2) schedule(dynamic,32)
 	for (i = 0; i < message->num_tiles; i++)
 	{
-	    #pragma omp critical
-	    {
-		/* RFX_TILE */
-		stream_read_uint16(s, blockType); /* blockType (2 bytes), must be set to CBT_TILE (0xCAC3) */
-		stream_read_uint32(s, blockLen); /* blockLen (4 bytes) */
-
-		pos = stream_get_pos(s) - 6 + blockLen;
-		stream_attach((&ss), s->data, s->size);
-        stream_set_pos((&ss), stream_get_pos(s));
-        stream_set_pos(s, pos);
-        jj=j++;
-	    }
-	    //printf("num_tiles=%d, jj=%d, ss=%ld\n", message->num_tiles, jj, stream_get_pos(ss));
-
-#if 0
-		if (blockType != CBT_TILE)
-		{
-			DEBUG_WARN("unknown block type 0x%X, expected CBT_TILE (0xCAC3).", blockType);
-			break;
-		}
-#endif
-        if (blockType == CBT_TILE)
-        {
-            //printf("Is CBT_TILE..\n");
-            rfx_process_message_tile(context, message->tiles[jj], &ss);
-        }
-        else
-        {
-            printf("unknown block type 0x%X, expected CBT_TILE (0xCAC3).", blockType);
-        }
-        //}//end omp
+	    sem_post(&sem);
+	    sem_getvalue(&sem, &sem_val);
+	    //printf("sem_post, val=%d\n", sem_val);
 	}
+	sem_wait(&sem2);
+	//sleep(1);
+	//printf("\033[1;33mfinish tile_num=%d\033[m\n", message->num_tiles);
+	stream_set_pos(s, stream_get_pos(ss));
+
 }
 
 RFX_MESSAGE* rfx_process_message(RFX_CONTEXT* context, uint8* data, uint32 length)
