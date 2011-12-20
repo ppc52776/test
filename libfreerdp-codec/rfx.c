@@ -470,12 +470,15 @@ static void *rfx_process_message_tile_thread(void *ptr)
         else
         {
             printf("unknown block type 0x%X, expected CBT_TILE (0xCAC3).\n", blockType);
+            printf("tid=%d in lock, val=%d\n", tid, val);
+            printf("address of sss=%p, sss->size=%d, sss->data=%p, pos=%ld, data=%p\n",
+               &sss, sss.size, sss.data, stream_get_pos((&sss)), ((uint16*)(&sss)->data)[0]);
         }
         //pthread_mutex_unlock(&mutex);
         //pthread_mutex_lock(&mutex);
         if(jj==g_message->num_tiles-1)
         {
-            jj=-1;
+            //jj=-1;
             sem_post(&sem2);
         }
         //pthread_mutex_unlock(&mutex);
@@ -577,7 +580,7 @@ static void rfx_process_message_tileset(RFX_CONTEXT* context, RFX_MESSAGE* messa
 	for (i = 0; i < message->num_tiles; i++)
 	{
 	    sem_post(&sem);
-	    sem_getvalue(&sem, &sem_val);
+	    //sem_getvalue(&sem, &sem_val);
 	    //printf("sem_post, val=%d\n", sem_val);
 	}
 	sem_wait(&sem2);
