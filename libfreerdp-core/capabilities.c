@@ -140,7 +140,7 @@ void rdp_write_general_capability_set(STREAM* s, rdpSettings* settings)
 
 	header = rdp_capability_set_start(s);
 
-	extraFlags = LONG_CREDENTIALS_SUPPORTED; /* | NO_BITMAP_COMPRESSION_HDR; */
+	extraFlags = LONG_CREDENTIALS_SUPPORTED | NO_BITMAP_COMPRESSION_HDR;
 
 	if (settings->auto_reconnection)
 		extraFlags |= AUTORECONNECT_SUPPORTED;
@@ -155,8 +155,8 @@ void rdp_write_general_capability_set(STREAM* s, rdpSettings* settings)
 		settings->suppress_output = false;
 	}
 
-	stream_write_uint16(s, 0); /* osMajorType (2 bytes) */
-	stream_write_uint16(s, 0); /* osMinorType (2 bytes) */
+	stream_write_uint16(s, OSMAJORTYPE_WINDOWS); /* osMajorType (2 bytes) */
+	stream_write_uint16(s, OSMINORTYPE_WINDOWS_NT); /* osMinorType (2 bytes) */
 	stream_write_uint16(s, CAPS_PROTOCOL_VERSION); /* protocolVersion (2 bytes) */
 	stream_write_uint16(s, 0); /* pad2OctetsA (2 bytes) */
 	stream_write_uint16(s, 0); /* generalCompressionTypes (2 bytes) */
@@ -309,20 +309,27 @@ void rdp_write_order_capability_set(STREAM* s, rdpSettings* settings)
 	uint8* header;
 	uint16 orderFlags;
 	uint16 orderSupportExFlags;
+	uint16 textANSICodePage;
 
 	header = rdp_capability_set_start(s);
 
-	orderFlags =	NEGOTIATE_ORDER_SUPPORT |
-			ZERO_BOUNDS_DELTA_SUPPORT |
-			COLOR_INDEX_SUPPORT;
+	/* see [MSDN-CP]: http://msdn.microsoft.com/en-us/library/dd317756 */
+	textANSICodePage = 65001; /* Unicode (UTF-8) */
 
 	orderSupportExFlags = 0;
-
-	if (settings->frame_marker)
-		orderSupportExFlags |= CACHE_BITMAP_V3_SUPPORT;
+	orderFlags = NEGOTIATE_ORDER_SUPPORT | ZERO_BOUNDS_DELTA_SUPPORT | COLOR_INDEX_SUPPORT;
 
 	if (settings->bitmap_cache_v3)
+	{
+		orderSupportExFlags |= CACHE_BITMAP_V3_SUPPORT;
+		orderFlags |= ORDER_FLAGS_EXTRA_SUPPORT;
+	}
+
+	if (settings->frame_marker)
+	{
 		orderSupportExFlags |= ALTSEC_FRAME_MARKER_SUPPORT;
+		orderFlags |= ORDER_FLAGS_EXTRA_SUPPORT;
+	}
 
 	stream_write_zero(s, 16); /* terminalDescriptor (16 bytes) */
 	stream_write_uint32(s, 0); /* pad4OctetsA (4 bytes) */
@@ -498,6 +505,11 @@ void rdp_read_pointer_capability_set(STREAM* s, uint16 length, rdpSettings* sett
 
 	if (colorPointerFlag == false)
 		settings->color_pointer = false;
+
+	if (settings->server_mode)
+	{
+		settings->pointer_cache_size = pointerCacheSize;
+	}
 }
 
 /**
@@ -817,19 +829,18 @@ void rdp_write_glyph_cache_capability_set(STREAM* s, rdpSettings* settings)
 	header = rdp_capability_set_start(s);
 
 	/* glyphCache (40 bytes) */
-	rdp_write_cache_definition(s, &settings->glyphCache[0]);
-	rdp_write_cache_definition(s, &settings->glyphCache[1]);
-	rdp_write_cache_definition(s, &settings->glyphCache[2]);
-	rdp_write_cache_definition(s, &settings->glyphCache[3]);
-	rdp_write_cache_definition(s, &settings->glyphCache[4]);
-	rdp_write_cache_definition(s, &settings->glyphCache[5]);
-	rdp_write_cache_definition(s, &settings->glyphCache[6]);
-	rdp_write_cache_definition(s, &settings->glyphCache[7]);
-	rdp_write_cache_definition(s, &settings->glyphCache[8]);
-	rdp_write_cache_definition(s, &settings->glyphCache[9]);
+	rdp_write_cache_definition(s, &settings->glyphCache[0]); /* glyphCache0 (4 bytes) */
+	rdp_write_cache_definition(s, &settings->glyphCache[1]); /* glyphCache1 (4 bytes) */
+	rdp_write_cache_definition(s, &settings->glyphCache[2]); /* glyphCache2 (4 bytes) */
+	rdp_write_cache_definition(s, &settings->glyphCache[3]); /* glyphCache3 (4 bytes) */
+	rdp_write_cache_definition(s, &settings->glyphCache[4]); /* glyphCache4 (4 bytes) */
+	rdp_write_cache_definition(s, &settings->glyphCache[5]); /* glyphCache5 (4 bytes) */
+	rdp_write_cache_definition(s, &settings->glyphCache[6]); /* glyphCache6 (4 bytes) */
+	rdp_write_cache_definition(s, &settings->glyphCache[7]); /* glyphCache7 (4 bytes) */
+	rdp_write_cache_definition(s, &settings->glyphCache[8]); /* glyphCache8 (4 bytes) */
+	rdp_write_cache_definition(s, &settings->glyphCache[9]); /* glyphCache9 (4 bytes) */
 
-	/* fragCache */
-	rdp_write_cache_definition(s, &settings->fragCache);
+	rdp_write_cache_definition(s, &settings->fragCache);  /* fragCache (4 bytes) */
 
 	stream_write_uint16(s, settings->glyphSupportLevel); /* glyphSupportLevel (2 bytes) */
 
@@ -867,14 +878,14 @@ void rdp_read_offscreen_bitmap_cache_capability_set(STREAM* s, uint16 length, rd
 void rdp_write_offscreen_bitmap_cache_capability_set(STREAM* s, rdpSettings* settings)
 {
 	uint8* header;
-	uint32 offscreenSupportLevel;
+	uint32 offscreenSupportLevel = false;
 
 	header = rdp_capability_set_start(s);
 
 	if (settings->offscreen_bitmap_cache)
 		offscreenSupportLevel = true;
 
-	stream_read_uint32(s, offscreenSupportLevel); /* offscreenSupportLevel (4 bytes) */
+	stream_write_uint32(s, offscreenSupportLevel); /* offscreenSupportLevel (4 bytes) */
 	stream_write_uint16(s, settings->offscreen_bitmap_cache_size); /* offscreenCacheSize (2 bytes) */
 	stream_write_uint16(s, settings->offscreen_bitmap_cache_entries); /* offscreenCacheEntries (2 bytes) */
 
@@ -929,7 +940,7 @@ void rdp_write_bitmap_cache_cell_info(STREAM* s, BITMAP_CACHE_V2_CELL_INFO* cell
 	 * is used to indicate a persistent bitmap cache.
 	 */
 
-	info = cellInfo->numEntries || (cellInfo->persistent << 31);
+	info = (cellInfo->numEntries | (cellInfo->persistent << 31));
 	stream_write_uint32(s, info);
 }
 
@@ -1931,7 +1942,7 @@ void rdp_write_confirm_active(STREAM* s, rdpSettings* settings)
 	stream_write_uint16(s, 0); /* pad2Octets (2 bytes) */
 
 	/* Capability Sets */
-	numberCapabilities = 14;
+	numberCapabilities = 15;
 	rdp_write_general_capability_set(s, settings);
 	rdp_write_bitmap_capability_set(s, settings);
 	rdp_write_order_capability_set(s, settings);
@@ -1948,6 +1959,7 @@ void rdp_write_confirm_active(STREAM* s, rdpSettings* settings)
 	rdp_write_virtual_channel_capability_set(s, settings);
 	rdp_write_sound_capability_set(s, settings);
 	rdp_write_share_capability_set(s, settings);
+	rdp_write_font_capability_set(s, settings);
 	rdp_write_control_capability_set(s, settings);
 	rdp_write_color_cache_capability_set(s, settings);
 	rdp_write_window_activation_capability_set(s, settings);
@@ -1958,10 +1970,13 @@ void rdp_write_confirm_active(STREAM* s, rdpSettings* settings)
 		rdp_write_offscreen_bitmap_cache_capability_set(s, settings);
 	}
 
-	if (settings->large_pointer)
+	if (settings->received_caps[CAPSET_TYPE_LARGE_POINTER])
 	{
-		numberCapabilities++;
-		rdp_write_large_pointer_capability_set(s, settings);
+		if (settings->large_pointer)
+		{
+			numberCapabilities++;
+			rdp_write_large_pointer_capability_set(s, settings);
+		}
 	}
 
 	if (settings->remote_app)
@@ -1975,12 +1990,6 @@ void rdp_write_confirm_active(STREAM* s, rdpSettings* settings)
 	{
 		numberCapabilities++;
 		rdp_write_multifragment_update_capability_set(s, settings);
-	}
-
-	if (settings->received_caps[CAPSET_TYPE_LARGE_POINTER])
-	{
-		numberCapabilities++;
-		rdp_write_large_pointer_capability_set(s, settings);
 	}
 
 	if (settings->received_caps[CAPSET_TYPE_SURFACE_COMMANDS])
