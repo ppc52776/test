@@ -166,7 +166,7 @@ RFX_CONTEXT* rfx_context_new(void)
 	}
 	int t1=0, t2=1;
 	pthread_create(&th[0], NULL, rfx_process_message_tile_thread, (void*) &t1);
-	pthread_create(&th[1], NULL, rfx_process_message_tile_thread, (void*) &t2);
+	//pthread_create(&th[1], NULL, rfx_process_message_tile_thread, (void*) &t2);
 	context->priv = NULL;
 	context->priv_set[0]->pool = rfx_pool_new();    //only need one tile buffer
 	context->priv_set[1]->pool = context->priv_set[0]->pool;
