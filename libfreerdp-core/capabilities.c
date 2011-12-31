@@ -119,6 +119,9 @@ void rdp_read_general_capability_set(STREAM* s, uint16 length, rdpSettings* sett
 	stream_read_uint8(s, refreshRectSupport); /* refreshRectSupport (1 byte) */
 	stream_read_uint8(s, suppressOutputSupport); /* suppressOutputSupport (1 byte) */
 
+	if (!(extraFlags & FASTPATH_OUTPUT_SUPPORTED))
+		settings->fastpath_output = false;
+
 	if (refreshRectSupport == false)
 		settings->refresh_rect = false;
 
@@ -526,7 +529,7 @@ void rdp_write_pointer_capability_set(STREAM* s, rdpSettings* settings)
 
 	header = rdp_capability_set_start(s);
 
-	colorPointerFlag = (settings->color_pointer) ? true : false;
+	colorPointerFlag = (settings->color_pointer) ? 1 : 0;
 
 	stream_write_uint16(s, colorPointerFlag); /* colorPointerFlag (2 bytes) */
 	stream_write_uint16(s, settings->pointer_cache_size); /* colorPointerCacheSize (2 bytes) */
@@ -562,10 +565,13 @@ void rdp_read_share_capability_set(STREAM* s, uint16 length, rdpSettings* settin
 void rdp_write_share_capability_set(STREAM* s, rdpSettings* settings)
 {
 	uint8* header;
+	uint16 nodeId;
 
 	header = rdp_capability_set_start(s);
 
-	stream_write_uint16(s, settings->server_mode ? 0x03EA : 0); /* nodeId (2 bytes) */
+	nodeId = (settings->server_mode) ? 0x03EA : 0;
+
+	stream_write_uint16(s, nodeId); /* nodeId (2 bytes) */
 	stream_write_uint16(s, 0); /* pad2Octets (2 bytes) */
 
 	rdp_capability_set_finish(s, header, CAPSET_TYPE_SHARE);
@@ -673,10 +679,21 @@ void rdp_read_input_capability_set(STREAM* s, uint16 length, rdpSettings* settin
 
 	stream_seek(s, 64); /* imeFileName (64 bytes) */
 
-	if (!settings->server_mode &&
-		(inputFlags & INPUT_FLAG_FASTPATH_INPUT) == 0 && (inputFlags & INPUT_FLAG_FASTPATH_INPUT2) == 0)
+	if (settings->server_mode != true)
 	{
-		settings->fastpath_input = false;
+		if (inputFlags & INPUT_FLAG_FASTPATH_INPUT)
+		{
+			/* advertised by RDP 5.0 and 5.1 servers */
+		}
+		else if (inputFlags & INPUT_FLAG_FASTPATH_INPUT2)
+		{
+			/* avertised by RDP 5.2, 6.0, 6.1 and 7.0 servers */
+		}
+		else
+		{
+			/* server does not support fastpath input */
+			settings->fastpath_input = false;
+		}
 	}
 }
 
@@ -1029,10 +1046,13 @@ void rdp_read_virtual_channel_capability_set(STREAM* s, uint16 length, rdpSettin
 void rdp_write_virtual_channel_capability_set(STREAM* s, rdpSettings* settings)
 {
 	uint8* header;
+	uint32 flags;
 
 	header = rdp_capability_set_start(s);
 
-	stream_write_uint32(s, settings->server_mode ? VCCAPS_COMPR_CS_8K : VCCAPS_NO_COMPR); /* flags (4 bytes) */
+	flags = (settings->server_mode) ? VCCAPS_COMPR_CS_8K : VCCAPS_NO_COMPR;
+
+	stream_write_uint32(s, flags); /* flags (4 bytes) */
 	stream_write_uint32(s, settings->vc_chunk_size); /* VCChunkSize (4 bytes) */
 
 	rdp_capability_set_finish(s, header, CAPSET_TYPE_VIRTUAL_CHANNEL);

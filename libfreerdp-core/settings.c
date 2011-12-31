@@ -54,6 +54,7 @@ rdpSettings* settings_new(void* instance)
 		settings->kbd_type = 0;
 		settings->kbd_subtype = 0;
 		settings->kbd_fn_keys = 0;
+		settings->kbd_layout = 0;
 		settings->encryption = false;
 		settings->port = 3389;
 		settings->desktop_resize = true;
@@ -95,7 +96,7 @@ rdpSettings* settings_new(void* instance)
 
 		settings->color_pointer = true;
 		settings->large_pointer = true;
-		settings->pointer_cache_size = 32;
+		settings->pointer_cache_size = 20;
 		settings->sound_beeps = true;
 		settings->disable_wallpaper = false;
 		settings->disable_full_window_drag = false;
