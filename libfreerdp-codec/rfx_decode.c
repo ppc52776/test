@@ -34,7 +34,7 @@
 #include "rfx_decode.h"
 
 //static int tid; //omp thread id
-pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
+//pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
 
 static void rfx_decode_format_rgb(sint16* r_buf, sint16* g_buf, sint16* b_buf,
 	RFX_PIXEL_FORMAT pixel_format, uint8* dst_buf)

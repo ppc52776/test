@@ -126,7 +126,8 @@ struct _RFX_CONTEXT
 	/* private definitions */
 	RFX_CONTEXT_PRIV* priv;
 	RFX_CONTEXT_PRIV* priv_set[2];
-	//RFX_POOL* priv_pool; /* memory pool */
+	/* memory pool */
+	//RFX_POOL2* priv_pool;
 };
 typedef struct _RFX_CONTEXT RFX_CONTEXT;
 

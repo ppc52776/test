@@ -72,6 +72,7 @@ void rfx_pool_put_tile(RFX_POOL* pool, RFX_TILE* tile)
 RFX_TILE* rfx_pool_get_tile(RFX_POOL* pool)
 {
 	RFX_TILE* tile;
+    //printf("rfx_pool_get_tile, count = %d\n", pool->count);
 
 	if (pool->count < 1)
 	{

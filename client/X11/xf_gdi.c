@@ -640,6 +640,8 @@ void xf_gdi_surface_bits(rdpContext* context, SURFACE_BITS_COMMAND* surface_bits
 				(XRectangle*) message->rects, message->num_rects, YXBanded);
 
 		/* Draw the tiles to primary surface, each is 64x64. */
+		static int c=0;
+        char f[20];
 		for (i = 0; i < message->num_tiles; i++)
 		{
 			image = XCreateImage(xfi->display, xfi->visual, 24, ZPixmap, 0,
@@ -647,6 +649,11 @@ void xf_gdi_surface_bits(rdpContext* context, SURFACE_BITS_COMMAND* surface_bits
 
 			tx = message->tiles[i]->x + surface_bits_command->destLeft;
 			ty = message->tiles[i]->y + surface_bits_command->destTop;
+			//printf("Draw tile, index = %d, x = %d, y = %d\n", i, tx, ty);
+
+			c++;
+			sprintf(f, "/tmp/RFX_%06d", c);
+			//freerdp_bitmap_write(f, message->tiles[i]->data, 64, 64, 32);
 
 			XPutImage(xfi->display, xfi->primary, xfi->gc, image, 0, 0, tx, ty, 64, 64);
 			XFree(image);

@@ -51,11 +51,13 @@
 
 sem_t sem, sem2;    //sem for tileset, sem2 for waiting tiles finish
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+//pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER; //for waiting finish
+boolean finish_flag[2];    //If two threads is finished ?
 STREAM *ss;
 int j;
 RFX_CONTEXT* g_context;
 RFX_MESSAGE* g_message;
-static void *rfx_process_message_tile_thread(void *ptr);
+static void *rfx_process_message_tileset_thread(void *ptr);
 
 /**
  * The quantization values control the compression rate and quality. The value
@@ -164,12 +166,16 @@ RFX_CONTEXT* rfx_context_new(void)
 
 	context->priv->dwt_buffer = (sint16*)(((uintptr_t)context->priv->dwt_mem + 16) & ~ 0x0F);
 	}
-	int t1=0, t2=1;
-	pthread_create(&th[0], NULL, rfx_process_message_tile_thread, (void*) &t1);
-	//pthread_create(&th[1], NULL, rfx_process_message_tile_thread, (void*) &t2);
+
+	pthread_create(&th[0], NULL, rfx_process_message_tileset_thread, (void*) 0);
+	pthread_create(&th[1], NULL, rfx_process_message_tileset_thread, (void*) 1);
+	//int t1=0, t2=1;
+	//pthread_create(&th[0], NULL, rfx_process_message_tileset_thread0, (void*) &t1);
+	//pthread_create(&th[1], NULL, rfx_process_message_tileset_thread1, (void*) t2);
 	context->priv = NULL;
 	context->priv_set[0]->pool = rfx_pool_new();    //only need one tile buffer
 	context->priv_set[1]->pool = context->priv_set[0]->pool;
+	//context->priv_pool = rfx_pool_new();
 
     /* initialize the default pixel format */
 	rfx_context_set_pixel_format(context, RFX_PIXEL_FORMAT_BGRA);
@@ -200,6 +206,7 @@ void rfx_context_free(RFX_CONTEXT* context)
 	xfree(context->quants);
 
 	rfx_pool_free(context->priv_set[0]->pool);
+	//rfx_pool_free(context->priv_pool);
 
 	rfx_profiler_print(context);
 	rfx_profiler_free(context);
@@ -370,6 +377,7 @@ static void rfx_process_message_region(RFX_CONTEXT* context, RFX_MESSAGE* messag
 	stream_seek_uint8(s); /* regionFlags (1 byte) */
 	stream_read_uint16(s, message->num_rects); /* numRects (2 bytes) */
 
+    //printf("num_rects = %d\n", message->num_rects);
 	if (message->num_rects < 1)
 	{
 		DEBUG_WARN("no rects.");
@@ -427,23 +435,23 @@ static void rfx_process_message_tile(RFX_CONTEXT* context, RFX_TILE* tile, STREA
 		tile->data, tid);
 }
 
-
-static void *rfx_process_message_tile_thread(void *ptr)
+static void *rfx_process_message_tileset_thread(void *ptr)
 {
     uint32 blockLen;
 	uint16 blockType;
     STREAM sss;  //private stream location
     int pos, jj;
-    int tid = *(int*)ptr;
-    int val;
+    int tid = ptr;
+    //int val;
 
+    //printf("Thread Got tid = %d\n", tid);
     while(1)
     {
         sem_wait(&sem); //wait until new message comes
 
         /* critical section */
         pthread_mutex_lock(&mutex);
-        sem_getvalue(&sem, &val);
+        //sem_getvalue(&sem, &val);
         //printf("tid=%d in lock, val=%d\n", tid, val);
         //printf("address of ss=%p, ss->size=%d, ss->data=%p, pos=%ld, data=%p\n",
         //       ss, ss->size, ss->data, stream_get_pos(ss), ((uint16*)ss->data)[0]);
@@ -455,7 +463,7 @@ static void *rfx_process_message_tile_thread(void *ptr)
         stream_attach((&sss), ss->data, ss->size);
         stream_set_pos((&sss), stream_get_pos(ss));
         stream_set_pos(ss, pos);
-        jj=j++;
+        jj = j++;
         pthread_mutex_unlock(&mutex);
         /* end of critical section */
 
@@ -465,23 +473,34 @@ static void *rfx_process_message_tile_thread(void *ptr)
         if (blockType == CBT_TILE)
         {
             //printf("Is CBT_TILE..\n");
+            // decoded tiles are saved in g_message->tiles[x]->data
+            //printf("jj = %d, tid = %d\n", jj, tid);
             rfx_process_message_tile(g_context, g_message->tiles[jj], &sss, tid);
         }
         else
         {
             printf("unknown block type 0x%X, expected CBT_TILE (0xCAC3).\n", blockType);
-            printf("tid=%d in lock, val=%d\n", tid, val);
-            printf("address of sss=%p, sss->size=%d, sss->data=%p, pos=%ld, data=%p\n",
+//            printf("tid=%d in lock, val=%d\n", tid, val);
+            printf("address of sss=%p, sss->size=%d, sss->data=%p, pos=%ld, data=0x%x\n",
                &sss, sss.size, sss.data, stream_get_pos((&sss)), ((uint16*)(&sss)->data)[0]);
         }
         //pthread_mutex_unlock(&mutex);
-        //pthread_mutex_lock(&mutex);
-        if(jj==g_message->num_tiles-1)
+        if(jj == g_message->num_tiles-1)
+            finish_flag[0] = true;
+        else if(jj == g_message->num_tiles-2)
+            finish_flag[1] = true;
+
+        if( (finish_flag[0] && finish_flag[1]) || g_message->num_tiles == 1)
+            sem_post(&sem2);
+/*
+        pthread_mutex_lock(&mutex2);
+        if(jj == g_message->num_tiles-1)
         {
             //jj=-1;
             sem_post(&sem2);
         }
-        //pthread_mutex_unlock(&mutex);
+        pthread_mutex_unlock(&mutex2);
+*/
     }
     return NULL;    //fix for compiler warning
 }
@@ -561,13 +580,22 @@ static void rfx_process_message_tileset(RFX_CONTEXT* context, RFX_MESSAGE* messa
 			context->quants[i * 10 + 8], context->quants[i * 10 + 9]);
 	}
 
+    /*
+     * IF pool is null, then malloc it;
+     * If pool is not null, then copy from pool to message->tiles;
+     * by Gentoo
+     */
 	message->tiles = rfx_pool_get_tiles(context->priv_set[0]->pool, message->num_tiles);
+	//message->tiles = rfx_pool_get_tiles(context->priv_pool, message->num_tiles);
 
 	/* tiles */
     //static STREAM ss;// = xnew(STREAM);
 	//static int j, jj;
+	// Initialize some variable for 2 decoding threads
 	j=0;
-	int sem_val;
+	finish_flag[0] = false;
+	finish_flag[1] = false;
+	//int sem_val;
 	stream_attach(ss, s->data, s->size);
 	stream_set_pos(ss, stream_get_pos(s));
 	//memcpy(ss, s, sizeof(STREAM));
@@ -681,6 +709,7 @@ uint16 rfx_message_get_tile_count(RFX_MESSAGE* message)
 
 RFX_TILE* rfx_message_get_tile(RFX_MESSAGE* message, int index)
 {
+    printf("rfx_message_get_tile, index = %d\n", index);
 	return message->tiles[index];
 }
 
@@ -691,6 +720,7 @@ uint16 rfx_message_get_rect_count(RFX_MESSAGE* message)
 
 RFX_RECT* rfx_message_get_rect(RFX_MESSAGE* message, int index)
 {
+    printf("rfx_message_get_rect, index = %d\n", index);
 	return &message->rects[index];
 }
 
@@ -703,6 +733,8 @@ void rfx_message_free(RFX_CONTEXT* context, RFX_MESSAGE* message)
 		if (message->tiles != NULL)
 		{
 			rfx_pool_put_tiles(context->priv_set[0]->pool, message->tiles, message->num_tiles);
+			//printf("rfx_message_free, pool_count = %d, num_tiles = %d\n", context->priv_set[0]->pool->count, message->num_tiles);
+			//rfx_pool_put_tiles(context->priv_pool, message->tiles, message->num_tiles);
 			xfree(message->tiles);
 		}
 
