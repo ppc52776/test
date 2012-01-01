@@ -25,10 +25,13 @@
 
 #include <pthread.h>
 #include <semaphore.h>
-sem_t sem, sem2;    //sem for tileset, sem2 for waiting tiles finish
+
+#define QUEUE_LENGTH 5
+sem_t rdp_sem, rdp_sem2;    //sem for tileset, sem2 for waiting tiles finish
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-STREAM *s2[2];    //stream buf for switch
+STREAM *s2[QUEUE_LENGTH];    //stream buf for switch
 int j=0;    //swither for buf
+rdpRdp* g_rdp;  //for passing var to thread
 static void *fastpath_recv_updates_pipe();
 static void *switch_thread();
 int decode=1; //show screen
@@ -713,12 +716,40 @@ static void *switch_thread()
 
 static boolean rdp_recv_fastpath_pdu(rdpRdp* rdp, STREAM* s)
 {
-	uint16 length;
-	rdpFastPath* fastpath;
-	//int sem_val;
-	if(j>1) j=0; //cycle queue
+	//int sem_val
 
-	fastpath = rdp->fastpath;
+#if 1
+    int z;
+	g_rdp = rdp;
+
+	//if(j>=1) j=0; //cycle queue
+	//if queue full, wait before 'return true'
+
+	s2[j] = stream_new(s->size);
+	s2[j]->size = s->size;
+	memcpy(s2[j]->data, s->data, s->size);
+	stream_set_pos(s2[j], stream_get_pos(s));
+	printf("j = %d\n", j);
+	//printf("stream_pos = %ld\n", stream_get_pos(s));
+	//printf("stream_size = %d\n", stream_get_size(s));
+	//stream_copy(s2[j], s, s->size);
+	j++; //next queue
+
+	if(j==QUEUE_LENGTH)
+	{
+	    printf("sem_post 2\n");
+	    for(z=0; z<QUEUE_LENGTH; z++)
+            sem_post(&rdp_sem); //bring up thread
+	    sem_wait(&rdp_sem2); //wait thread finish
+	    j=0;
+	}
+
+#else
+//origin code
+    uint16 length;
+	rdpFastPath* fastpath;
+
+    fastpath = rdp->fastpath;
 	length = fastpath_read_header_rdp(fastpath, s);
 
 	if (length == 0 || length > stream_get_left(s))
@@ -732,23 +763,15 @@ static boolean rdp_recv_fastpath_pdu(rdpRdp* rdp, STREAM* s)
 		rdp_decrypt(rdp, s, length);
 	}
 
+    fastpath_recv_updates(rdp->fastpath, s);
+#endif
+
+/*
     if(decode)
         return fastpath_recv_updates(rdp->fastpath, s);
 	else
         return true;
-	//if queue full, wait before 'return true'
-
-	s2[j] = stream_new(s->size);
-	s2[j]->size=s->size;
-	memcpy(s2[j]->data, s->data, s->size);
-	stream_set_pos(s2[j], stream_get_pos(s));
-	j++; //next queue
-	if(j==2)
-	{
-	    sem_post(&sem); //bring up thread
-	    sem_post(&sem); //2 jobs
-	    sem_wait(&sem2); //wait thread finish
-	}
+*/
 
 	return true;
 	//stream_copy(s2[j], s, s->size);
@@ -756,17 +779,39 @@ static boolean rdp_recv_fastpath_pdu(rdpRdp* rdp, STREAM* s)
 
 static void *fastpath_recv_updates_pipe()
 {
-    //fastpath_recv_updates(rdp->fastpath, s);
-    static int q=0;
+    uint16 length;
+	rdpFastPath* fastpath;
+    int q=0;
+
     while(1)
     {
-        sem_wait(&sem);
-        if(q>1) q=0;
-        //fastpath_recv_updates(rdp->fastpath, s2[q]);
+        sem_wait(&rdp_sem);
+
+        printf("q = %d\n", q);
+        //printf("stream_size_in_q = %d\n", stream_get_size(s2[q]));
+
+        fastpath = g_rdp->fastpath;
+        length = fastpath_read_header_rdp(fastpath, s2[q]);
+
+        if (length == 0 || length > stream_get_left(s2[q]))
+        {
+            printf("incorrect FastPath PDU header length %d\n", length);
+            //return false;
+            exit(-1);
+        }
+
+        if (fastpath->encryptionFlags & FASTPATH_OUTPUT_ENCRYPTED)
+        {
+            rdp_decrypt(g_rdp, s2[q], length);
+        }
+
+        fastpath_recv_updates(g_rdp->fastpath, s2[q]);
+
         stream_free(s2[q]);
         q++;
-        if(q==2) {
-            sem_post(&sem2);
+        if(q==QUEUE_LENGTH) {
+            sem_post(&rdp_sem2);
+            q=0;
         }
     }
     return NULL; //fix for compiler warning...
@@ -901,12 +946,12 @@ rdpRdp* rdp_new(freerdp* instance)
 	}
 
 	pthread_t th[2];
-	sem_init(&sem, 0, 0);
-	sem_init(&sem2, 0, 0);
+	sem_init(&rdp_sem, 0, 0);
+	sem_init(&rdp_sem2, 0, 0);
 	//s2[0] = xnew(STREAM);
 	//s2[1] = xnew(STREAM);
     //int t1=0, t2=1;
-	//pthread_create(&th[0], NULL, fastpath_recv_updates_pipe, NULL);
+	pthread_create(&th[0], NULL, fastpath_recv_updates_pipe, NULL);
 	//pthread_create(&th[1], NULL, rfx_process_message_tile_thread, (void*) &t2);
 	pthread_create(&th[0], NULL, switch_thread, NULL);
 

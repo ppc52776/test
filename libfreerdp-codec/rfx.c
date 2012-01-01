@@ -51,7 +51,7 @@
 
 sem_t sem, sem2;    //sem for tileset, sem2 for waiting tiles finish
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-//pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER; //for waiting finish
+pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER; //for waiting finish
 boolean finish_flag[2];    //If two threads is finished ?
 STREAM *ss;
 int j;
@@ -470,19 +470,19 @@ static void *rfx_process_message_tileset_thread(void *ptr)
         //printf("num_tiles=%d, jj=%d, ss=%ld\n", message->num_tiles, jj, stream_get_pos(ss));
 
         //printf("jj=%d\n", jj);
+        //printf("jj = %d, tid = %d, num_tiles = %d\n", jj, tid, g_message->num_tiles);
         if (blockType == CBT_TILE)
         {
             //printf("Is CBT_TILE..\n");
             // decoded tiles are saved in g_message->tiles[x]->data
-            //printf("jj = %d, tid = %d\n", jj, tid);
             rfx_process_message_tile(g_context, g_message->tiles[jj], &sss, tid);
         }
         else
         {
             printf("unknown block type 0x%X, expected CBT_TILE (0xCAC3).\n", blockType);
 //            printf("tid=%d in lock, val=%d\n", tid, val);
-            printf("address of sss=%p, sss->size=%d, sss->data=%p, pos=%ld, data=0x%x\n",
-               &sss, sss.size, sss.data, stream_get_pos((&sss)), ((uint16*)(&sss)->data)[0]);
+            //printf("address of sss=%p, sss->size=%d, sss->data=%p, pos=%ld, data=0x%x\n",
+            //   &sss, sss.size, sss.data, stream_get_pos((&sss)), ((uint16*)(&sss)->data)[0]);
         }
         //pthread_mutex_unlock(&mutex);
         if(jj == g_message->num_tiles-1)
@@ -490,8 +490,15 @@ static void *rfx_process_message_tileset_thread(void *ptr)
         else if(jj == g_message->num_tiles-2)
             finish_flag[1] = true;
 
+        pthread_mutex_lock(&mutex2);
         if( (finish_flag[0] && finish_flag[1]) || g_message->num_tiles == 1)
+        {
+            finish_flag[0] = false;
+            finish_flag[1] = false;
+            //printf("\033[1;33mFire sem_post, tid = %d \033[m\n", tid);
             sem_post(&sem2);
+        }
+        pthread_mutex_unlock(&mutex2);
 /*
         pthread_mutex_lock(&mutex2);
         if(jj == g_message->num_tiles-1)
@@ -593,8 +600,8 @@ static void rfx_process_message_tileset(RFX_CONTEXT* context, RFX_MESSAGE* messa
 	//static int j, jj;
 	// Initialize some variable for 2 decoding threads
 	j=0;
-	finish_flag[0] = false;
-	finish_flag[1] = false;
+	//finish_flag[0] = false;
+	//finish_flag[1] = false;
 	//int sem_val;
 	stream_attach(ss, s->data, s->size);
 	stream_set_pos(ss, stream_get_pos(s));

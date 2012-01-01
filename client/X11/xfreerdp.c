@@ -356,7 +356,7 @@ boolean xf_get_pixmap_info(xfInfo* xfi)
 	int i;
 	int vi_count;
 	int pf_count;
-	XVisualInfo* vi;
+	XVisualInfo* vi = NULL;
 	XVisualInfo* vis;
 	XVisualInfo template;
 	XPixmapFormatValues* pf;
@@ -410,7 +410,7 @@ boolean xf_get_pixmap_info(xfInfo* xfi)
 	{
 		// Detect if the server visual has an inverted colormap
 		// (BGR vs RGB, or red being the least significant byte)
-		if (vi->red_mask & 0xFF) 
+		if (vi->red_mask & 0xFF)
 		{
 			xfi->clrconv->invert = true;
 		}
@@ -433,7 +433,7 @@ int xf_error_handler(Display* d, XErrorEvent* ev)
 	int do_abort = true;
 
 	XGetErrorText(d, ev->error_code, buf, sizeof(buf));
-	printf(buf);
+	printf("%s\n", buf);
 
 	if (do_abort)
 		abort();
@@ -588,7 +588,7 @@ void cpuid(unsigned info, unsigned *eax, unsigned *ebx, unsigned *ecx, unsigned 
 #endif
 #endif
 }
- 
+
 uint32 xf_detect_cpu()
 {
 	unsigned int eax, ebx, ecx, edx = 0;
@@ -596,7 +596,7 @@ uint32 xf_detect_cpu()
 
 	cpuid(1, &eax, &ebx, &ecx, &edx);
 
-	if (edx & (1<<26)) 
+	if (edx & (1<<26))
 	{
 		DEBUG("SSE2 detected");
 		cpu_opt |= CPU_SSE2;
@@ -913,12 +913,12 @@ void xf_window_free(xfInfo* xfi)
 		}
 	}
 
-	if (xfi->rfx_context) 
+	if (xfi->rfx_context)
 	{
 		rfx_context_free(xfi->rfx_context);
 		xfi->rfx_context = NULL;
 	}
-	
+
 	xfree(xfi->clrconv);
 
 	xf_tsmf_uninit(xfi);

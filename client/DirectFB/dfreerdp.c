@@ -61,6 +61,9 @@ void df_end_paint(rdpContext* context)
 	rdpGdi* gdi;
 	dfInfo* dfi;
 
+	DFBRectangle* rect;
+	void *bufAllocatePtr;
+
 	gdi = context->gdi;
 	dfi = ((dfContext*) context)->dfi;
 
@@ -79,7 +82,12 @@ void df_end_paint(rdpContext* context)
 	dfi->update_rect.h = gdi->height;
 #endif
 
-	dfi->primary->Blit(dfi->primary, dfi->surface, &(dfi->update_rect), dfi->update_rect.x, dfi->update_rect.y);
+	//dfi->primary->Blit(dfi->primary, dfi->surface, &(dfi->update_rect), dfi->update_rect.x, dfi->update_rect.y);
+	rect = &dfi->update_rect;
+	bufAllocatePtr = dfi->dsc.preallocated[0].data+(((rect->y*gdi->width)+rect->x)*gdi->bytesPerPixel);
+	//bufAllocatePtr = dfi->dsc.preallocated[0].data+(((rect->y*1280)+rect->x)*3);
+	dfi->surface->Write(dfi->primary, rect, bufAllocatePtr, dfi->dsc.preallocated[0].pitch);
+	dfi->primary->Flip(dfi->primary, NULL, (DFBSurfaceFlipFlags)DSFLIP_BLIT|DSFLIP_WAIT);
 }
 
 boolean df_get_fds(freerdp* instance, void** rfds, int* rcount, void** wfds, int* wcount)
@@ -161,6 +169,7 @@ boolean df_pre_connect(freerdp* instance)
 
 boolean df_post_connect(freerdp* instance)
 {
+    printf("in post_connect.\n");
 	rdpGdi* gdi;
 	dfInfo* dfi;
 	dfContext* context;
@@ -170,6 +179,10 @@ boolean df_post_connect(freerdp* instance)
 
 	gdi_init(instance, CLRCONV_ALPHA | CLRCONV_INVERT | CLRBUF_16BPP | CLRBUF_32BPP, NULL);
 	gdi = instance->context->gdi;
+
+	// Force Mode, by DJ
+	//DirectFBSetOption ("bg-none", NULL);
+	//DirectFBSetOption ("mode", "1280x1024");
 
 	dfi->err = DirectFBCreate(&(dfi->dfb));
 
@@ -183,11 +196,15 @@ boolean df_post_connect(freerdp* instance)
 
 	dfi->dfb->GetDisplayLayer(dfi->dfb, 0, &(dfi->layer));
 	dfi->layer->EnableCursor(dfi->layer, 1);
+	//By DJ
+	dfi->layer->SetCooperativeLevel( (dfi->layer), DLSCL_ADMINISTRATIVE);
 
 	dfi->dsc.flags = DSDESC_CAPS | DSDESC_WIDTH | DSDESC_HEIGHT | DSDESC_PREALLOCATED | DSDESC_PIXELFORMAT;
 	dfi->dsc.caps = DSCAPS_SYSTEMONLY;
 	dfi->dsc.width = gdi->width;
 	dfi->dsc.height = gdi->height;
+	//dfi->dsc.width = 1280;
+	//dfi->dsc.height = 1024;
 
 	if (gdi->dstBpp == 32 || gdi->dstBpp == 24)
 		dfi->dsc.pixelformat = DSPF_AiRGB;
@@ -198,8 +215,11 @@ boolean df_post_connect(freerdp* instance)
 	else
 		dfi->dsc.pixelformat = DSPF_AiRGB;
 
+    printf("\033[1;33mgdi->dstBpp = %d\033[m\n", gdi->dstBpp);
+    //dfi->dsc.pixelformat = DSPF_AiRGB;
 	dfi->dsc.preallocated[0].data = gdi->primary_buffer;
 	dfi->dsc.preallocated[0].pitch = gdi->width * gdi->bytesPerPixel;
+	//dfi->dsc.preallocated[0].pitch = 1280 * 3;
 	dfi->dfb->CreateSurface(dfi->dfb, &(dfi->dsc), &(dfi->surface));
 
 	instance->update->BeginPaint = df_begin_paint;
