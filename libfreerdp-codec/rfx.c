@@ -49,6 +49,8 @@
 #define RFX_INIT_SIMD(_rfx_context) do { } while (0)
 #endif
 
+//#define _MS_DECODE
+#include "msrfx.h"
 sem_t sem, sem2;    //sem for tileset, sem2 for waiting tiles finish
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER; //for waiting finish
@@ -183,6 +185,7 @@ RFX_CONTEXT* rfx_context_new(void)
 	/* create profilers for default decoding routines */
 	rfx_profiler_create(context);
 
+#ifndef _MS_DECODE
 	/* set up default routines */
 	context->decode_ycbcr_to_rgb = rfx_decode_ycbcr_to_rgb;
 	//context->encode_rgb_to_ycbcr = rfx_encode_rgb_to_ycbcr;
@@ -190,7 +193,11 @@ RFX_CONTEXT* rfx_context_new(void)
 	//context->quantization_encode = rfx_quantization_encode;
 	context->dwt_2d_decode = rfx_dwt_2d_decode;
 	//context->dwt_2d_encode = rfx_dwt_2d_encode;
-
+#else
+	context->decode_ycbcr_to_rgb = msrfx_ycbcr2rgb;
+	context->quantization_decode = msrfx_quantization;
+	context->dwt_2d_decode = msrfx_IDWT;
+#endif
 	return context;
 }
 
@@ -494,7 +501,7 @@ static void *rfx_process_message_tileset_thread(void *ptr)
         if( (finish_flag[0] && finish_flag[1]) || g_message->num_tiles == 1)
         {
             finish_flag[0] = false;
-            finish_flag[1] = false;
+             finish_flag[1] = false;
             //printf("\033[1;33mFire sem_post, tid = %d \033[m\n", tid);
             sem_post(&sem2);
         }

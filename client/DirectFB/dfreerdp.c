@@ -181,8 +181,8 @@ boolean df_post_connect(freerdp* instance)
 	gdi = instance->context->gdi;
 
 	// Force Mode, by DJ
-	//DirectFBSetOption ("bg-none", NULL);
-	//DirectFBSetOption ("mode", "1280x1024");
+	DirectFBSetOption ("bg-none", NULL);
+	DirectFBSetOption ("mode", "1280x1024");
 
 	dfi->err = DirectFBCreate(&(dfi->dfb));
 

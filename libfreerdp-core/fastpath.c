@@ -33,7 +33,7 @@
  * Fast-Path packet format is defined in [MS-RDPBCGR] 2.2.9.1.2, which revises
  * server output packets from the first byte with the goal of improving
  * bandwidth.
- * 
+ *
  * Slow-Path packet always starts with TPKT header, which has the first
  * byte 0x03, while Fast-Path packet starts with 2 zero bits in the first
  * two less significant bits of the first byte.

@@ -195,6 +195,7 @@ void xf_hw_begin_paint(rdpContext* context)
 
 void xf_hw_end_paint(rdpContext* context)
 {
+    //printf("hw_end_paint: in\n");
 	xfInfo* xfi;
 	sint32 x, y;
 	uint32 w, h;
@@ -213,6 +214,7 @@ void xf_hw_end_paint(rdpContext* context)
 
 		xf_rail_paint(xfi, context->rail, x, y, x + w - 1, y + h - 1);
 	}
+	//printf("hw_end_paint: end\n");
 }
 
 void xf_hw_desktop_resize(rdpContext* context)

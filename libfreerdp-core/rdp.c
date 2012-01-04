@@ -28,13 +28,21 @@
 
 #define QUEUE_LENGTH 5
 sem_t rdp_sem, rdp_sem2;    //sem for tileset, sem2 for waiting tiles finish
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t rdp_mutex = PTHREAD_MUTEX_INITIALIZER;
 STREAM *s2[QUEUE_LENGTH];    //stream buf for switch
 int j=0;    //swither for buf
 rdpRdp* g_rdp;  //for passing var to thread
-static void *fastpath_recv_updates_pipe();
+static void *rdp_recv_fastpath_pdu_pipe();
 static void *switch_thread();
 int decode=1; //show screen
+int queue_full=0;
+typedef struct _queue
+{
+        STREAM *s;
+        struct _queue *next;
+} STREAM_QUEUE;
+STREAM_QUEUE *stream_queue, *stream_queue_head;
+int queue_count=0;  // How many RDPs have been queued
 
 static const char* const DATA_PDU_TYPE_STRINGS[] =
 {
@@ -716,34 +724,64 @@ static void *switch_thread()
 
 static boolean rdp_recv_fastpath_pdu(rdpRdp* rdp, STREAM* s)
 {
-	//int sem_val
+	int sem_val;
 
 #if 1
-    int z;
-	g_rdp = rdp;
+    g_rdp = rdp;
+/*
+    int q;
 
 	//if(j>=1) j=0; //cycle queue
 	//if queue full, wait before 'return true'
+    STREAM *ptr = stream_new(s->size);
+	ptr->size = s->size;
+	memcpy(ptr->data, s->data, s->size);
+	STREAM_QUEUE *sq = xnew(STREAM_QUEUE);
+	sq->s = ptr;
+	sq->next = NULL;
+	stream_queue->next = sq;
+	stream_queue = stream_queue->next;
 
+	//pthread_mutex_lock(&rdp_mutex);
+	//queue_count++;
+	//pthread_mutex_unlock(&rdp_mutex);
+
+    sem_getvalue(&rdp_sem, &q);
+	if(q > 1)
+	{
+	    printf("\033[1;33m..sem_wait\033[m\n");
+	    queue_full=1;
+	    sem_wait(&rdp_sem2);
+	}
+	//printf("sem_post, q = %d, address = %p\n", q, sq);
+	sem_post(&rdp_sem);
+*/
+
+    int z;
+    if(j>=QUEUE_LENGTH) j=0; //rewind queue
 	s2[j] = stream_new(s->size);
 	s2[j]->size = s->size;
 	memcpy(s2[j]->data, s->data, s->size);
-	stream_set_pos(s2[j], stream_get_pos(s));
-	printf("j = %d\n", j);
+	//stream_set_pos(s2[j], stream_get_pos(s)); //pos=0
+	printf("j = %d, addr = %p\n", j, s2[j]);
 	//printf("stream_pos = %ld\n", stream_get_pos(s));
 	//printf("stream_size = %d\n", stream_get_size(s));
 	//stream_copy(s2[j], s, s->size);
 	j++; //next queue
 
-	if(j==QUEUE_LENGTH)
+    sem_getvalue(&rdp_sem, &sem_val);
+	if(sem_val==QUEUE_LENGTH)
 	{
-	    printf("sem_post 2\n");
-	    for(z=0; z<QUEUE_LENGTH; z++)
-            sem_post(&rdp_sem); //bring up thread
+	    printf("sem_post, val = %d\n", sem_val);
+	    //for(z=0; z<QUEUE_LENGTH; z++)
+        //    sem_post(&rdp_sem); //bring up thread
+        queue_full=1;
 	    sem_wait(&rdp_sem2); //wait thread finish
-	    j=0;
+	    //j=0;
 	}
+	sem_post(&rdp_sem);
 
+    return true;
 #else
 //origin code
     uint16 length;
@@ -763,7 +801,7 @@ static boolean rdp_recv_fastpath_pdu(rdpRdp* rdp, STREAM* s)
 		rdp_decrypt(rdp, s, length);
 	}
 
-    fastpath_recv_updates(rdp->fastpath, s);
+    return fastpath_recv_updates(rdp->fastpath, s);
 #endif
 
 /*
@@ -772,25 +810,66 @@ static boolean rdp_recv_fastpath_pdu(rdpRdp* rdp, STREAM* s)
 	else
         return true;
 */
-
-	return true;
 	//stream_copy(s2[j], s, s->size);
 }
 
-static void *fastpath_recv_updates_pipe()
+static void *rdp_recv_fastpath_pdu_pipe()
 {
     uint16 length;
 	rdpFastPath* fastpath;
     int q=0;
+    STREAM_QUEUE *ptr = stream_queue_head;
+    STREAM_QUEUE *tmp;
+    int sem_val;
 
     while(1)
     {
         sem_wait(&rdp_sem);
 
-        printf("q = %d\n", q);
-        //printf("stream_size_in_q = %d\n", stream_get_size(s2[q]));
-
         fastpath = g_rdp->fastpath;
+#if 0
+        //printf("in thread, address = %p \n", ptr->next);
+        if(ptr->next == NULL)
+        {
+            printf("Queue empty. wait!? Is this possible ??\n");
+        }
+        tmp = ptr;
+        ptr = ptr->next;
+        free(tmp);
+
+        //printf("fastpath_event = %d\n", g_rdp->fastpath->numberEvents);
+
+        sem_getvalue(&rdp_sem, &sem_val);
+        if(queue_full)
+        {
+            printf("..sem_post\n");
+            sem_post(&rdp_sem2);
+            queue_full=0;
+        }
+
+        length = fastpath_read_header_rdp(fastpath, ptr->s);
+
+        if (length == 0 || length > stream_get_left(ptr->s))
+        {
+            printf("\033[1;33mincorrect FastPath PDU header length %d\033[m\n", length);
+            //return false;
+            exit(-1);
+        }
+
+        if (fastpath->encryptionFlags & FASTPATH_OUTPUT_ENCRYPTED)
+        {
+            rdp_decrypt(g_rdp, ptr->s, length);
+        }
+
+        fastpath_recv_updates(g_rdp->fastpath, ptr->s);
+
+        stream_free(ptr->s);
+#else
+
+//origin
+        if(q>=QUEUE_LENGTH) q=0;    //rewind queue
+        printf("q = %d, addr = %p\n", q, s2[q]);
+        //printf("stream_size_in_q = %d\n", stream_get_size(s2[q]));
         length = fastpath_read_header_rdp(fastpath, s2[q]);
 
         if (length == 0 || length > stream_get_left(s2[q]))
@@ -806,13 +885,17 @@ static void *fastpath_recv_updates_pipe()
         }
 
         fastpath_recv_updates(g_rdp->fastpath, s2[q]);
+        usleep(1);
 
         stream_free(s2[q]);
+
         q++;
-        if(q==QUEUE_LENGTH) {
+        if(queue_full) {
             sem_post(&rdp_sem2);
-            q=0;
+            //q=0;
+            queue_full=0;
         }
+#endif
     }
     return NULL; //fix for compiler warning...
 }
@@ -951,9 +1034,13 @@ rdpRdp* rdp_new(freerdp* instance)
 	//s2[0] = xnew(STREAM);
 	//s2[1] = xnew(STREAM);
     //int t1=0, t2=1;
-	pthread_create(&th[0], NULL, fastpath_recv_updates_pipe, NULL);
+	pthread_create(&th[0], NULL, rdp_recv_fastpath_pdu_pipe, NULL);
 	//pthread_create(&th[1], NULL, rfx_process_message_tile_thread, (void*) &t2);
-	pthread_create(&th[0], NULL, switch_thread, NULL);
+	//pthread_create(th[0], NULL, switch_thread, NULL);
+	stream_queue = xnew(STREAM_QUEUE);
+	stream_queue->next = NULL;
+	stream_queue->s = NULL;
+	stream_queue_head = stream_queue;
 
 	return rdp;
 }
